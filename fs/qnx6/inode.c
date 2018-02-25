@@ -305,7 +305,9 @@ static int qnx6_fill_super(struct super_block *s, void *data, int silent)
 	int ret = -EINVAL;
 	u64 offset;
 	int bootblock_offset = QNX6_BOOTBLOCK_SIZE;
+	bool use_sb_1;
 
+	use_sb_1 = true;
 	qs = kzalloc(sizeof(struct qnx6_sb_info), GFP_KERNEL);
 	if (!qs)
 		return -ENOMEM;
@@ -406,24 +408,43 @@ static int qnx6_fill_super(struct super_block *s, void *data, int silent)
 		sbi->sb = (struct qnx6_super_block *)bh1->b_data;
 		brelse(bh2);
 		pr_info("superblock #1 active\n");
+		use_sb_1 = true;
 	} else {
 		/* superblock #2 active */
 		sbi->sb_buf = bh2;
 		sbi->sb = (struct qnx6_super_block *)bh2->b_data;
 		brelse(bh1);
+		use_sb_1 = false;
 		pr_info("superblock #2 active\n");
 	}
 mmi_success:
-	/* sanity check - limit maximum indirect pointer levels */
-	if (sb1->Inode.levels > QNX6_PTR_MAX_LEVELS) {
-		pr_err("too many inode levels (max %i, sb %i)\n",
-		       QNX6_PTR_MAX_LEVELS, sb1->Inode.levels);
-		goto out;
+	if (use_sb_1)
+	{
+		/* sanity check - limit maximum indirect pointer levels */
+		if (sb1->Inode.levels > QNX6_PTR_MAX_LEVELS) {
+			pr_err("too many inode levels (max %i, sb %i)\n",
+			       QNX6_PTR_MAX_LEVELS, sb1->Inode.levels);
+			goto out;
+		}
+		if (sb1->Longfile.levels > QNX6_PTR_MAX_LEVELS) {
+			pr_err("too many longfilename levels (max %i, sb %i)\n",
+			       QNX6_PTR_MAX_LEVELS, sb1->Longfile.levels);
+			goto out;
+		}
 	}
-	if (sb1->Longfile.levels > QNX6_PTR_MAX_LEVELS) {
-		pr_err("too many longfilename levels (max %i, sb %i)\n",
-		       QNX6_PTR_MAX_LEVELS, sb1->Longfile.levels);
-		goto out;
+	else
+	{
+		/* sanity check - limit maximum indirect pointer levels */
+		if (sb2->Inode.levels > QNX6_PTR_MAX_LEVELS) {
+			pr_err("too many inode levels (max %i, sb %i)\n",
+			       QNX6_PTR_MAX_LEVELS, sb2->Inode.levels);
+			goto out;
+		}
+		if (sb2->Longfile.levels > QNX6_PTR_MAX_LEVELS) {
+			pr_err("too many longfilename levels (max %i, sb %i)\n",
+			       QNX6_PTR_MAX_LEVELS, sb2->Longfile.levels);
+			goto out;
+		}
 	}
 	s->s_op = &qnx6_sops;
 	s->s_magic = QNX6_SUPER_MAGIC;
@@ -432,13 +453,24 @@ mmi_success:
 	/* ease the later tree level calculations */
 	sbi = QNX6_SB(s);
 	sbi->s_ptrbits = ilog2(s->s_blocksize / 4);
-	sbi->inodes = qnx6_private_inode(s, &sb1->Inode);
-	if (!sbi->inodes)
-		goto out;
-	sbi->longfile = qnx6_private_inode(s, &sb1->Longfile);
-	if (!sbi->longfile)
-		goto out1;
-
+	if(use_sb_1)
+	{		
+		sbi->inodes = qnx6_private_inode(s, &sb1->Inode);
+		if (!sbi->inodes)
+			goto out;
+		sbi->longfile = qnx6_private_inode(s, &sb1->Longfile);
+		if (!sbi->longfile)
+			goto out1;
+	}
+	else
+	{
+		sbi->inodes = qnx6_private_inode(s, &sb2->Inode);
+		if (!sbi->inodes)
+			goto out;
+		sbi->longfile = qnx6_private_inode(s, &sb2->Longfile);
+		if (!sbi->longfile)
+			goto out1;
+	}
 	/* prefetch root inode */
 	root = qnx6_iget(s, QNX6_ROOT_INO);
 	if (IS_ERR(root)) {
